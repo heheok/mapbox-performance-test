@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>Mapbox Heatmap Performance Test</title>
+        <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+        <link href="https://api.mapbox.com/mapbox-gl-js/v2.2.0/mapbox-gl.css" rel="stylesheet" />
+        <script src="https://api.mapbox.com/mapbox-gl-js/v2.2.0/mapbox-gl.js"></script>
+        <style>
+            body {
+                margin: 0;
+                padding: 0;
+            }
+            #map {
+                height: 100vh;
+                width: 75vw;
+            }
+            #console {
+                padding:5px;
+                height: 100vh;
+                width: 25vw;
+            }
+            .passive {
+                pointer-events: none;
+            }
+            .flexer {
+                display:flex;
+            }
+            li {
+                list-style:none;
+                padding:10px;
+                border-bottom:1px solid #ddd;
+            }
+            li div{
+                display:flex;
+                justify-content:space-between;
+            }
+            li div div {
+                display:flex;
+            }
+            ul {
+                padding:0;
+                margin:0;
+            }
+            .process {
+                background:yellow;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="flexer">
+            <div id="map" class="passive"></div>
+            <div id="console">
+                <a href="/?cnt=25" >25K</a>
+                <a href="/?cnt=50" >50K</a>
+                <a href="/?cnt=75" >75K</a>
+                <a href="/?cnt=100" >100K</a>
+                <a href="/?cnt=125" >125K</a>
+                <a href="/?cnt=150" >150K</a>
+                <a href="/?cnt=175" >175K</a>
+                <hr />
+                <h3>Timeline:</h3>
+                <ul id="logger">
+
+                </ul>
+            </div>
+        </div>
+        <script>
+            var idleCount = 0;
+            var domElement = document.getElementById("map");
+            var consoleElement = document.getElementById("logger");
+            var isSourceLoaded = false;
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const cnt = urlParams.get('cnt') || 25;
+
+            function string_to_slug (str) {
+                str = str.replace(/^\s+|\s+$/g, '');
+                str = str.toLowerCase();
+                var from = "àáäâèéëêìíïîòóöôùúüûñç·/_,:;";
+                var to   = "aaaaeeeeiiiioooouuuunc------";
+                for (var i=0, l=from.length ; i<l ; i++) {
+                    str = str.replace(new RegExp(from.charAt(i), 'g'), to.charAt(i));
+                }
+
+                str = str.replace(/[^a-z0-9 -]/g, '')
+                    .replace(/\s+/g, '-')
+                    .replace(/-+/g, '-');
+
+                return str;
+            }
+            const addLog  = (evt,time=false) => {
+                let el = document.getElementById(evt);
+                if(el && time) {
+                    el.getElementsByClassName('timeline')[0].classList.remove('process');
+                    el.getElementsByClassName('timeline')[0].innerHTML = time+'ms';
+                } else {
+                    let node = document.createElement("li");
+                    let wrapper = document.createElement("div");
+                    wrapper.setAttribute("id", evt);
+                    let label = document.createElement('div');
+                    label.classList.add('label');
+                    let text = document.createTextNode(evt);
+                    let timeline = document.createElement('div');
+                    timeline.classList.add('timeline');
+                    timeline.classList.add('process');
+                    let text2 = document.createTextNode('...');
+
+                    label.appendChild(text);
+                    timeline.appendChild(text2);
+                    wrapper.appendChild(label);
+                    wrapper.appendChild(timeline);
+                    node.appendChild(wrapper);
+                    consoleElement.appendChild(node);
+                }
+            }
+            const loggedItems = {};
+            const timeStart = (evt) => {
+                let event = string_to_slug(evt)
+                if(loggedItems[event]) {
+                    console.error('This event already exists');
+                } else {
+                    loggedItems[event] = {start:Date.now(),end:undefined,tm:undefined};
+                    addLog(event);
+                }
+            }
+            const timeEnd = (evt) => {
+                let event = string_to_slug(evt)
+                if(loggedItems[event]) {
+                    loggedItems[event].end = Date.now();
+                    loggedItems[event].tm = loggedItems[event].end-loggedItems[event].start;
+                    addLog(event,loggedItems[event].end-loggedItems[event].start)
+                }
+            }
+            timeStart('Overall');
+            timeStart('Parse JS');
+            timeStart('Mapbox Initial Load');
+            mapboxgl.accessToken = "access-token";
+            var map = new mapboxgl.Map({
+                container: "map",
+                style: "mapbox://styles/mapbox/dark-v10",
+                center: [-106.6266596, 35.5618153],
+                zoom: 3,
+            });
+
+            map.on('sourcedata', function(e) {
+                if(e.sourceId === "earthquakes") {
+                    if(!isSourceLoaded) {
+                        if (e.isSourceLoaded) {
+                            isSourceLoaded = true;
+                            timeEnd('GeoJSON Load');
+                            timeStart('Layer One Add');
+                            map.addLayer(
+                                {
+                                    id: "earthquakes-heat",
+                                    type: "heatmap",
+                                    source: "earthquakes",
+                                    maxzoom: 14,
+                                    paint: {
+                                        "heatmap-weight": ["interpolate", ["linear"], ["get", "mag"], 0, 0, 6, 1],
+                                        "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 4, 1, 6, 3],
+                                        "heatmap-color": ["interpolate",["linear"],["heatmap-density"],0,"rgba(33,102,172,0)",0.1,"#695C79",0.3,"#B57084",0.5,"#E67A82",0.7,"#EDB49A",1,"#FF0000"],
+                                        "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 3, 14, 10],
+                                        "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 10, 1, 14, 0],
+                                    },
+                                },
+                                "waterway-label"
+                            );
+                        }
+                    }
+                }
+            });
+            
+            
+            map.on("load", function () {
+                timeEnd('Mapbox Initial Load');
+                timeStart('GeoJSON Load');
+                map.addSource("earthquakes", {
+                    type: "geojson",
+                    data: "http://localhost:3000?cnt="+cnt,
+                });
+                
+                map.on('idle',function(){
+                    if(idleCount === 0) {
+                        timeEnd('Layer One Add');
+                        timeStart('Layer Two Add');
+                        map.addLayer(
+                            {
+                                id: "earthquakes-point",
+                                type: "circle",
+                                source: "earthquakes",
+                                minzoom: 7,
+                                paint: {
+                                    "circle-color":"red",
+                                    "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 3, 13, 1,18,10],
+                                    "circle-opacity": ["interpolate", ["linear"], ["zoom"], 10, 0, 13, 1],
+                                },
+                            },
+                            "waterway-label"
+                        );
+                        idleCount++
+                    }
+                    if(idleCount === 1) {
+                        timeEnd('Layer Two Add');
+                        timeEnd('Overall');
+                        idleCount++;
+                        domElement.classList.remove('passive');
+                    }  
+                })
+            });
+            timeEnd('Parse JS');
+        </script>
+    </body>
+</html>
